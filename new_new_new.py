@@ -11,7 +11,8 @@ import time
 import schedule
 from flask import Flask
 import logging
-
+# ДОБАВЬТЕ ЭТУ СТРОКУ В САМОМ НАЧАЛЕ ФАЙЛА:
+from flask import request  # <-- это очень важно!
 
 # ========== НАСТРОЙКА ЛОГГИРОВАНИЯ ==========
 logging.basicConfig(
@@ -30,6 +31,31 @@ def home():
 @app.route('/health')
 def health():
     return "OK", 200
+
+# ======= ВЕБХУК ДЛЯ TELEGRAM =======
+@app.route('/webhook', methods=['POST'])  # ИСПРАВЛЕННАЯ СТРОКА
+def webhook():
+    """Endpoint для получения обновлений от Telegram"""
+    from flask import request
+    
+    # Проверяем токен для безопасности
+    token = request.headers.get('X-Telegram-Bot-Token') or request.args.get('token')
+    
+    if token != BOT_TOKEN:
+        return 'Unauthorized', 401
+    
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return 'OK', 200
+    return 'Bad Request', 400
+
+# ====================================
+
+# Запускаем Flask в отдельном потоке
+def run_flask():
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
 
 # Запускаем Flask в отдельном потоке
 def run_flask():
@@ -846,6 +872,42 @@ def show_stats(message):
         )     
 
 # ========== ТЕСТОВЫЕ КОМАНДЫ ==========
+
+@bot.message_handler(commands=['fullreset'])
+def full_reset(message):
+    """Полный сброс для тестирования (только админ)"""
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    conn, cursor = get_db_connection()
+    
+    try:
+        # Удаляем ВСЕ свои данные
+        cursor.execute("DELETE FROM users WHERE user_id = ?", (ADMIN_ID,))
+        cursor.execute("DELETE FROM channel_messages WHERE user_id = ?", (ADMIN_ID,))
+        conn.commit()
+        
+        # Удаляем вебхук (если используется)
+        try:
+            bot.remove_webhook()
+        except:
+            pass
+        
+        bot.reply_to(
+            message,
+            "🔄 ПОЛНЫЙ СБРОС ВЫПОЛНЕН!\n\n"
+            "1. Удалены все ваши данные из базы\n"
+            "2. Сброшен вебхук\n"
+            "3. Вы полностью 'новый' пользователь\n\n"
+            "Напишите /start для начала тестирования."
+        )
+        
+        logger.info(f"🔄 Админ {ADMIN_ID} выполнил полный сброс")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+        logger.error(f"❌ Ошибка полного сброса: {e}")
+        
 @bot.message_handler(commands=['ping'])
 def ping_command(message):
     """Проверка работы бота"""
@@ -1035,57 +1097,53 @@ if __name__ == "__main__":
     logger.info("🎨 ЗАПУСК ПЛЕНЭРНОГО КЛУБ БОТА")
     logger.info("=" * 50)
     
-    # Проверяем и исправляем структуру базы данных
-    check_database_structure()  # <-- ДОБАВЬ ЭТУ СТРОКУ
+    check_database_structure()
     
-    # Проверяем, работаем ли мы на Render
-    is_render = os.getenv('RENDER', False)
+    # НЕ запускаем polling на Render!
+    # Вместо этого используем вебхуки
     
-    if is_render:
-        # На Render: запускаем Flask в фоне
-        logger.info("🚀 Запускаем на Render (с Flask)")
-        flask_thread = threading.Thread(target=run_flask)
-        flask_thread.daemon = True
-        flask_thread.start()
+    if os.getenv('RENDER'):
+        # На Render используем вебхуки
+        logger.info("🌐 Настройка вебхуков для Render")
+        
+        # Удаляем существующие вебхуки
+        bot.remove_webhook()
+        time.sleep(1)
+        
+        # Получаем URL вашего сервиса на Render
+        # Render автоматически устанавливает RENDER_EXTERNAL_URL
+        render_url = os.getenv('RENDER_EXTERNAL_URL', '')
+        if render_url:
+            webhook_url = f"{render_url}/{BOT_TOKEN}"
+            bot.set_webhook(url=webhook_url)
+            logger.info(f"✅ Вебхук установлен: {webhook_url}")
+        else:
+            logger.error("❌ RENDER_EXTERNAL_URL не установлен!")
+        
+        # Запускаем Flask (он уже запущен в отдельном потоке)
+        # Бот будет обрабатывать запросы через вебхуки
     else:
-        # Локально (Pydroid 3): НЕ запускаем Flask
-        logger.info("📱 Запускаем локально (без Flask)")
-    
-    # ... остальной код
-    
-    # Создаем начальное соединение в главном потоке
-    try:
-        get_db_connection()
-        logger.info("✅ База данных подключена")
+        # Локально используем polling
+        logger.info("📱 Локальный запуск с polling")
         
-        # Информация о боте
-        bot_info = bot.get_me()
-        logger.info(f"🤖 Бот: @{bot_info.username}")
-        logger.info(f"👑 Админ ID: {ADMIN_ID}")
-        logger.info(f"🌐 Ссылка на Tilda: {TILDA_LINK}")
-        logger.info(f"📱 Реквизиты: {SBER_PHONE}")
-        
-        logger.info("=" * 50)
-        logger.info("📱 ОСНОВНАЯ ЛОГИКА БОТА:")
-        logger.info("1. /start → Приветствие с двумя сообщениями")
-        logger.info("2. Две кнопки: 'Узнать больше' и 'Хочу в клуб!'")
-        logger.info("3. Выбор тарифа (Читатель 100₽ / Участник 500₽)")
-        logger.info("4. Оплата по реквизитам + скриншот")
-        logger.info("5. Автоматическая выдача доступа в канал")
-        logger.info("=" * 50)
-        
-        logger.info("✅ Бот готов к работе...")
-        
-        # Запускаем бота с обработкой ошибок
-        while True:
-            try:
-                bot.polling(none_stop=True, timeout=60)
-            except Exception as e:
-                logger.error(f"❌ Ошибка polling: {e}")
-                time.sleep(15)
-                
-    except KeyboardInterrupt:
-        logger.info("\n⏹️ Остановка бота...")
-        close_all_connections()
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка запуска: {e}")
+        # Создаем начальное соединение
+        try:
+            get_db_connection()
+            logger.info("✅ База данных подключена")
+            
+            bot_info = bot.get_me()
+            logger.info(f"🤖 Бот: @{bot_info.username}")
+            
+            logger.info("✅ Бот готов к работе...")
+            
+            # Запускаем polling с обработкой ошибок
+            while True:
+                try:
+                    bot.polling(none_stop=True, timeout=60)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка polling: {e}")
+                    time.sleep(15)
+                    
+        except KeyboardInterrupt:
+            logger.info("⏹️ Остановка бота...")
+            close_all_connections()
