@@ -855,7 +855,7 @@ def check_all_subscriptions(message):
     try:
         conn, cursor = get_db_connection()
         
-        # Находим ВСЕХ оплативших пользователей (ИСПРАВЛЕННЫЙ ЗАПРОС)
+        # ВАЖНО: ТОЛЬКО 3 колонки!
         cursor.execute("""
             SELECT user_id, tariff, screenshot_date 
             FROM users 
@@ -872,103 +872,85 @@ def check_all_subscriptions(message):
         
         expired_count = 0
         active_count = 0
-        response = "📊 **РЕЗУЛЬТАТЫ ПРОВЕРКИ ПОДПИСОК:**\n\n"
+        response = "📊 РЕЗУЛЬТАТЫ ПРОВЕРКИ ПОДПИСОК:\n\n"
         
+        # ВАЖНО: ТОЛЬКО 3 переменные!
         for user_id, tariff, screenshot_date in all_users:
             try:
-                # Преобразуем дату
                 last_payment = datetime.strptime(screenshot_date, "%Y-%m-%d %H:%M:%S")
                 days_passed = (datetime.now() - last_payment).days
                 days_left = 30 - days_passed
                 
                 if days_passed >= 30:
-                    # Подписка ИСТЕКЛА
                     expired_count += 1
-                    
-                    # Меняем статус в базе
                     cursor.execute("UPDATE users SET paid = 0 WHERE user_id = ?", (user_id,))
                     
-                    # Отправляем сообщение пользователю
                     try:
                         bot.send_message(
                             user_id,
-                            f"⏰ **ВАША ПОДПИСКА ИСТЕКЛА!**\n\n"
+                            f"⏰ ВАША ПОДПИСКА ИСТЕКЛА!\n\n"
                             f"Подписка на тариф '{tariff.upper()}' закончилась.\n"
                             f"Последняя оплата: {screenshot_date}\n"
                             f"Прошло дней: {days_passed}\n\n"
                             f"Для продления доступа:\n"
                             f"1. Напишите /start\n"
                             f"2. Выберите тариф\n"
-                            f"3. Оплатите новый период\n\n"
-                            f"Без оплаты доступ к каналу ограничен.",
-                            parse_mode='Markdown'
+                            f"3. Оплатите новый период",
+                            parse_mode=None
                         )
-                        
                         response += f"❌ {user_id}: ИСТЕКЛА ({days_passed} дней)\n"
-                        
                     except Exception as e:
                         response += f"❌ {user_id}: ОШИБКА отправки\n"
-                        logger.error(f"Ошибка отправки {user_id}: {e}")
                 
                 else:
-                    # Подписка АКТИВНА
                     active_count += 1
                     
-                    # За 3 дня до окончания - напоминание
                     if days_left <= 3:
                         try:
                             bot.send_message(
                                 user_id,
-                                f"🔔 **НАПОМИНАНИЕ О ПОДПИСКЕ**\n\n"
-                                f"До окончания вашей подписки осталось {days_left} дня!\n"
-                                f"• Тариф: {tariff.upper()}\n"
-                                f"• Последняя оплата: {screenshot_date}\n"
-                                f"• Прошло дней: {days_passed}\n\n"
-                                f"Для продления:\n"
-                                f"1. Напишите /subscribe\n"
-                                f"2. Или отправьте новую оплату\n\n"
-                                f"После окончания доступ к каналу ограничится.",
-                                parse_mode='Markdown'
+                                f"🔔 НАПОМИНАНИЕ О ПОДПИСКЕ\n\n"
+                                f"До окончания осталось {days_left} дня!\n"
+                                f"Тариф: {tariff.upper()}\n"
+                                f"Оплата: {screenshot_date}\n"
+                                f"Для продления: /subscribe",
+                                parse_mode=None
                             )
-                            
                             response += f"⚠️ {user_id}: {days_left} дня осталось\n"
-                            
                         except:
-                            response += f"⚠️ {user_id}: Не удалось отправить напоминание\n"
+                            response += f"⚠️ {user_id}: Не удалось отправить\n"
                     else:
-                        response += f"✅ {user_id}: активно ({days_left} дней осталось)\n"
+                        response += f"✅ {user_id}: активно ({days_left} дней)\n"
                 
-                # Если ответ слишком длинный - отправляем часть
                 if len(response) > 3000:
-                    bot.send_message(ADMIN_ID, response, parse_mode='Markdown')
+                    bot.send_message(ADMIN_ID, response, parse_mode=None)
                     response = ""
                     
             except Exception as e:
-                logger.error(f"❌ Ошибка обработки пользователя {user_id}: {e}")
-                response += f"❓ {user_id}: Ошибка обработки\n"
+                logger.error(f"❌ Ошибка пользователя {user_id}: {e}")
+                response += f"❓ {user_id}: Ошибка\n"
         
         conn.commit()
-        conn.close()
+        # НЕ закрываем conn.close() - get_db_connection управляет соединением
         
-        # Итоговый отчёт
         report = f"""
-📈 **ИТОГИ ПРОВЕРКИ:**
+📈 ИТОГИ ПРОВЕРКИ:
 
-• Всего оплативших: {len(all_users)}
-• Активных подписок: {active_count}
-• Истекших подписок: {expired_count}
+Всего оплативших: {len(all_users)}
+Активных подписок: {active_count}
+Истекших подписок: {expired_count}
 
 ✅ Проверка завершена!
         """
         
         if response:
-            bot.send_message(ADMIN_ID, response, parse_mode='Markdown')
+            bot.send_message(ADMIN_ID, response, parse_mode=None)
         
-        bot.send_message(ADMIN_ID, report, parse_mode='Markdown')
-        logger.info(f"✅ Проверка подписок завершена. Истекло: {expired_count}")
+        bot.send_message(ADMIN_ID, report, parse_mode=None)
+        logger.info(f"✅ Проверка завершена. Истекло: {expired_count}")
         
     except Exception as e:
-        logger.error(f"❌ Ошибка проверки подписок: {e}")
+        logger.error(f"❌ Ошибка проверки: {e}")
         bot.reply_to(message, f"❌ Ошибка: {str(e)[:200]}")
         
 #===========СТАТУС ПОДПИСОК=====
@@ -979,6 +961,7 @@ def subscription_status(message):
         return
     
     try:
+        # Используем get_db_connection вместо прямого sqlite3.connect
         conn, cursor = get_db_connection()
         
         # Считаем по категориям
@@ -1012,9 +995,9 @@ def subscription_status(message):
         """)
         expired_but_not_updated = cursor.fetchone()[0] or 0
         
-        conn.close()
+        # НЕ закрываем соединение - get_db_connection управляет им сам
+        # conn.close() <-- УДАЛИ ЭТУ СТРОКУ ЕСЛИ ОНА ЕСТЬ
         
-        # БЕЗ Markdown разметки
         status = f"""
 📊 СТАТУС ПОДПИСОК НА {datetime.now().strftime('%d.%m.%Y')}:
 
@@ -1027,7 +1010,7 @@ def subscription_status(message):
 👥 Для списка: /list
         """
         
-        bot.reply_to(message, status, parse_mode=None)  # parse_mode=None
+        bot.reply_to(message, status, parse_mode=None)
         
     except Exception as e:
         logger.error(f"❌ Ошибка статуса подписок: {e}")
