@@ -69,12 +69,21 @@ thread_local = threading.local()
 def get_db_connection():
     """Создает соединение с БД для текущего потока"""
     try:
+        # ВАЖНО: Проверяем и создаем файл БД если его нет
+        if not os.path.exists(DB_PATH):
+            logger.info(f"📁 Создаем новую базу данных: {DB_PATH}")
+            # Создаем пустой файл
+            with open(DB_PATH, 'w') as f:
+                pass
+        
         if not hasattr(thread_local, "conn") or thread_local.conn is None:
+            logger.info("🔌 Создаем новое соединение с БД")
             thread_local.conn = sqlite3.connect(
                 DB_PATH, 
                 check_same_thread=False,
                 timeout=10
             )
+            thread_local.conn.row_factory = sqlite3.Row  # Для удобства
             thread_local.cursor = thread_local.conn.cursor()
             
             # Оптимизация для SQLite
@@ -82,13 +91,23 @@ def get_db_connection():
             thread_local.conn.execute("PRAGMA synchronous=NORMAL")
             thread_local.conn.execute("PRAGMA foreign_keys=ON")
             
-            # Создаем таблицы
+            # Создаем таблицы СРАЗУ
             create_tables()
         
         return thread_local.conn, thread_local.cursor
+        
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к БД: {e}")
-        raise
+        # Пробуем создать заново
+        if hasattr(thread_local, "conn"):
+            try:
+                thread_local.conn.close()
+            except:
+                pass
+            thread_local.conn = None
+            thread_local.cursor = None
+        
+        raise  # Передаем ошибку дальше
 
 def check_database_structure():
     """Проверяет и исправляет структуру базы данных (вызывается один раз при старте)"""
@@ -130,45 +149,50 @@ def check_database_structure():
 
 def create_tables():
     """Создает таблицы с правильной структурой"""
-    cursor = thread_local.cursor
-    
-    # Таблица пользователей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            tariff TEXT,
-            amount INTEGER DEFAULT 0,
-            clicked_link INTEGER DEFAULT 0,
-            paid INTEGER DEFAULT 0,
-            purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            screenshot_date TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Таблица сообщений в канале
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS channel_messages (
-            message_id INTEGER PRIMARY KEY,
-            user_id INTEGER,
-            first_name TEXT,
-            username TEXT,
-            text TEXT,
-            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            tariff TEXT,
-            FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
-        )
-    ''')
-    
-    # Создаем индексы для ускорения запросов
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_paid ON users(paid)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_tariff ON users(tariff)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_date ON channel_messages(date)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON channel_messages(user_id)")
-    
-    thread_local.conn.commit()
-    logger.info("✅ Таблицы созданы/проверены")
-
+    try:
+        cursor = thread_local.cursor
+        
+        # Таблица пользователей
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                tariff TEXT,
+                amount INTEGER DEFAULT 0,
+                clicked_link INTEGER DEFAULT 0,
+                paid INTEGER DEFAULT 0,
+                purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                screenshot_date TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица сообщений в канале
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS channel_messages (
+                message_id INTEGER PRIMARY KEY,
+                user_id INTEGER,
+                first_name TEXT,
+                username TEXT,
+                text TEXT,
+                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                tariff TEXT,
+                FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
+            )
+        ''')
+        
+        # Создаем индексы
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_paid ON users(paid)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_tariff ON users(tariff)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_date ON channel_messages(date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON channel_messages(user_id)")
+        
+        thread_local.conn.commit()
+        logger.info("✅ Таблицы созданы/проверены")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания таблиц: {e}")
+        raise
+        
 # ========== КОМАНДА /START ==========
 @bot.message_handler(commands=['start'])
 def start(message):
