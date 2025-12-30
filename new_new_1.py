@@ -855,9 +855,9 @@ def check_all_subscriptions(message):
     try:
         conn, cursor = get_db_connection()
         
-        # Находим ВСЕХ оплативших пользователей
+        # Находим ВСЕХ оплативших пользователей (ИСПРАВЛЕННЫЙ ЗАПРОС)
         cursor.execute("""
-            SELECT user_id, tariff, screenshot_date, first_name, username 
+            SELECT user_id, tariff, screenshot_date 
             FROM users 
             WHERE paid = 1 
             AND screenshot_date IS NOT NULL
@@ -874,7 +874,7 @@ def check_all_subscriptions(message):
         active_count = 0
         response = "📊 **РЕЗУЛЬТАТЫ ПРОВЕРКИ ПОДПИСОК:**\n\n"
         
-        for user_id, tariff, screenshot_date, first_name, username in all_users:
+        for user_id, tariff, screenshot_date in all_users:
             try:
                 # Преобразуем дату
                 last_payment = datetime.strptime(screenshot_date, "%Y-%m-%d %H:%M:%S")
@@ -904,7 +904,7 @@ def check_all_subscriptions(message):
                             parse_mode='Markdown'
                         )
                         
-                        response += f"❌ {user_id} ({first_name}): ИСТЕКЛА ({days_passed} дней)\n"
+                        response += f"❌ {user_id}: ИСТЕКЛА ({days_passed} дней)\n"
                         
                     except Exception as e:
                         response += f"❌ {user_id}: ОШИБКА отправки\n"
@@ -931,12 +931,12 @@ def check_all_subscriptions(message):
                                 parse_mode='Markdown'
                             )
                             
-                            response += f"⚠️ {user_id} ({first_name}): {days_left} дня осталось\n"
+                            response += f"⚠️ {user_id}: {days_left} дня осталось\n"
                             
                         except:
                             response += f"⚠️ {user_id}: Не удалось отправить напоминание\n"
                     else:
-                        response += f"✅ {user_id} ({first_name}): активно ({days_left} дней осталось)\n"
+                        response += f"✅ {user_id}: активно ({days_left} дней осталось)\n"
                 
                 # Если ответ слишком длинный - отправляем часть
                 if len(response) > 3000:
@@ -971,8 +971,8 @@ def check_all_subscriptions(message):
         logger.error(f"❌ Ошибка проверки подписок: {e}")
         bot.reply_to(message, f"❌ Ошибка: {str(e)[:200]}")
         
- # ========== СТАТУС ПОДПИСОК (БЫСТРЫЙ ПРОСМОТР) ==========
-@bot.message_handler(commands=['subs_status'])
+#===========СТАТУС ПОДПИСОК=====
+ @bot.message_handler(commands=['subs_status'])
 def subscription_status(message):
     """Быстрый просмотр статуса подписок (только для админа)"""
     if message.from_user.id != ADMIN_ID:
@@ -1014,8 +1014,9 @@ def subscription_status(message):
         
         conn.close()
         
+        # БЕЗ Markdown разметки
         status = f"""
-📊 **СТАТУС ПОДПИСОК НА {datetime.now().strftime('%d.%m.%Y')}:**
+📊 СТАТУС ПОДПИСОК НА {datetime.now().strftime('%d.%m.%Y')}:
 
 • Всего оплативших: {total_paid}
 • Активных подписок: {active}
@@ -1026,11 +1027,11 @@ def subscription_status(message):
 👥 Для списка: /list
         """
         
-        bot.reply_to(message, status, parse_mode='Markdown')
+        bot.reply_to(message, status, parse_mode=None)  # parse_mode=None
         
     except Exception as e:
         logger.error(f"❌ Ошибка статуса подписок: {e}")
-        bot.reply_to(message, f"❌ Ошибка: {str(e)[:200]}")       
+        bot.reply_to(message, f"❌ Ошибка: {str(e)[:200]}")
 
 # ========== ТЕСТОВЫЕ КОМАНДЫ ==========
 @bot.message_handler(commands=['ping'])
